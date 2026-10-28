@@ -1,0 +1,16 @@
+# Optional reference for later containerization.
+# Primary deploy: `python -m edges_rag` on minigtr with .env (see README).
+# When a Dockerfile exists, wire `build: .` or `image:` here and keep these mounts.
+services:
+  edges-rag:
+    image: edges-rag:local
+    profiles: ["optional"]
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      CHROMA_PERSIST_DIR: /data/chroma
+    volumes:
+      - ${INDEX_ROOT}:${INDEX_ROOT}:ro
+      - ${CHROMA_PERSIST_DIR:-./data/chroma}:/data/chroma
