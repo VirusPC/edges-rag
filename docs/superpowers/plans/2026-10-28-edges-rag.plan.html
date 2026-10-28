@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>edges-rag 计划</title>
+<link rel="stylesheet" href="/home/box/agent-data/workflows/html-plan/runtime/htmlplan.css">
+<script src="/home/box/agent-data/workflows/html-plan/runtime/htmlplan.js" defer></script>
+<body>
+
+<header>
+  <h1>Edges 框架知识问答服务 edges-rag</h1>
+  <doc-changes new="15"></doc-changes>
+  <details class="thread"><summary>Why · 13 条原话</summary>
+    <doc-quote via="prompt" from="peng cheng">改一下，改成索引edges框架吧。到时候作为框架官网的知识问答agent 用</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">仍叫 VirusPC/edges-rag（偏 edges）</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">VirusPC 下公开仓</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">minigtr 上 compose 出来的 edges 目录</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">只索引 Markdown / 文本（.md .txt .py .ts 等）</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">启动全量 + 监听文件变更实时增量</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">本地 Chroma（推荐起步）</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">4070ts 上的 Ollama（聊天 + embedding 都放那边）</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">Tailscale IP / 主机名（推荐）</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">FastAPI：POST /ask，返回答案+引用</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">路径 + 片段 + 相关度分数</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">简单 Bearer Token</doc-quote>
+    <doc-quote via="prompt" from="peng cheng">HTML plan. / 中文</doc-quote>
+  </details>
+</header>
+
+<main>
+<doc-plan>
+
+<!-- ═════ 1 ═════ -->
+<doc-claim>
+  <p>调用方带 Bearer Token 调 <code>POST /ask</code>，拿到答案和引用。</p>
+  <doc-mock frame="terminal" title="minigtr" w="480" caption="答案下面是引用：路径、片段、分数。"><template><span class="dim">$</span> curl -s -X POST http://minigtr:8000/ask \
+    -H "Authorization: Bearer $RAG_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"question":"edges compose add 做什么？"}'
+{
+  <b>"answer"</b>: "edges compose add 把外部 harness 仓库挂到当前 scope …",
+  <b>"citations"</b>: [
+    { "path": <span class="g">"skills/edges-compose/SKILL.md"</span>,
+      "snippet": "把外部 harness 仓库挂到当前 scope 时使用…",
+      "score": <span class="y">0.82</span> }
+  ]
+}</template></doc-mock>
+  <doc-ask id="health">
+    <p>v1 要不要加免鉴权的 <code>GET /health</code>？</p>
+    <label><input type="radio" name="health" value="no" checked> 不加 <small>按规格 YAGNI，只有 /ask</small></label>
+    <label><input type="radio" name="health" value="yes"> 加 <small>返回 {"status":"ok"}，不要 Token</small></label>
+  </doc-ask>
+
+  <doc-claim>
+    <p>Token 缺失或不对时，服务返回 401。</p>
+    <doc-code title="src/edges_rag/auth.py · sketch" lang="py" hl="9,11">
+<script type="text/plain">
+import hmac
+from fastapi import HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+
+def verify_bearer(credentials: HTTPAuthorizationCredentials | None,
+                  expected: str) -> None:
+    unauthorized = HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthorized",
+                                 headers={"WWW-Authenticate": "Bearer"})
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise unauthorized
+    if not hmac.compare_digest(credentials.credentials, expected):
+        raise unauthorized
+</script>
+      <doc-pin line="11" tone="ok" title="常量时间比较">不泄露 Token 长度信息。</doc-pin>
+    </doc-code>
+    <doc-ask id="bind">
+      <p>uvicorn 默认绑定哪个地址？</p>
+      <label><input type="radio" name="bind" value="0.0.0.0" checked> <code>0.0.0.0</code> <small>Tailscale 内网可访问；靠 Token 挡</small></label>
+      <label><input type="radio" name="bind" value="127.0.0.1"> <code>127.0.0.1</code> <small>只本机；官网要再加反代</small></label>
+    </doc-ask>
+  </doc-claim>
+
+  <doc-claim>
+    <p>每条引用带路径、片段和分数。</p>
+    <doc-schema id="ask-response" lang="json" title="AskResponse (POST /ask 200)" caption="path 相对 INDEX_ROOT；score 来自检索器。">
+<script type="text/plain">
+{
+  "answer": "string",              // Ollama 聊天模型的回答
+  "citations": [
+    {
+      "path": "skills/edges-compose/SKILL.md",   // 相对 INDEX_ROOT
+      "snippet": "string",         // 截断的片段，不是全文
+      "score": 0.82                // float；检索器无分数时为 null
+    }
+  ]
+}
+</script>
+    </doc-schema>
+    <doc-ask id="snippet">
+      <p>引用片段最多多少字符？</p>
+      <div class="opts-row">
+        <label><input type="radio" name="snippet" value="240" checked> 240</label>
+        <label><input type="radio" name="snippet" value="400"> 400</label>
+      </div>
+    </doc-ask>
+  </doc-claim>
+
+  <doc-claim>
+    <p>服务先检索 top-k 片段，再让 Ollama 作答。</p>
+    <doc-calls title="POST /ask" caption="点 QueryService.ask 打开草图。">
+<script type="text/plain">
++ **ask**(body: AskRequest)                         @ src/edges_rag/app.py:48
++   **require_auth** → **verify_bearer**()          @ src/edges_rag/auth.py:6
++   **QueryService.ask**(question)                  @ src/edges_rag/query_engine.py:30
++     index.as_retriever(similarity_top_k)         @ src/edges_rag/query_engine.py:31   -- Chroma
++     **_snippet**(text)                            @ src/edges_rag/query_engine.py:12
++     llm.complete(prompt)                         @ src/edges_rag/query_engine.py:57   -- Ollama chat
+</script>
+    </doc-calls>
+    <doc-ask id="topk">
+      <p>每次检索默认取几个片段（<code>RAG_TOP_K</code>）？</p>
+      <div class="opts-row">
+        <label><input type="radio" name="topk" value="3"> 3</label>
+        <label><input type="radio" name="topk" value="5" checked> 5</label>
+        <label><input type="radio" name="topk" value="8"> 8</label>
+      </div>
+    </doc-ask>
+    <doc-claim at="src/edges_rag/query_engine.py:30">
+      <p><b>query_engine.py:30</b> · QueryService.ask()</p>
+      <doc-code title="src/edges_rag/query_engine.py · sketch" lang="py" start="30" hl="31-33,43">
+<script type="text/plain">
+def ask(self, question: str) -> AskResponse:
+    retriever = self.store.get_index().as_retriever(
+        similarity_top_k=self.settings.rag_top_k)
+    nodes = retriever.retrieve(question)
+    citations, parts = [], []
+    for n in nodes:
+        path = str(n.node.metadata.get("path", ""))
+        text = n.node.get_content()
+        citations.append(Citation(path=path, snippet=_snippet(text),
+                                  score=float(n.score) if n.score is not None else None))
+        parts.append(f"[{path}]\n{text}")
+    prompt = ("You are the Edges framework knowledge assistant. "
+              "Answer using only the provided context. ...")
+    answer = self.llm.complete(prompt).text.strip()
+    return AskResponse(answer=answer, citations=citations)
+</script>
+        <doc-pin line="42" tone="info" title="只用检索到的上下文">上下文不够时说不知道。</doc-pin>
+      </doc-code>
+    </doc-claim>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 2 ═════ -->
+<doc-claim>
+  <p>服务启动时全量索引 INDEX_ROOT，向量写进本地 Chroma。</p>
+  <doc-flow caption="全量索引只在 minigtr 上跑；嵌入请求去 4070ts。">
+<script type="text/plain">
+root = INDEX_ROOT / composed edges
++ ld = loader.py / load_documents
++ ix = index_store.py / build_full
+ch = Chroma / CHROMA_PERSIST_DIR [db]
+ol = Ollama embed / 4070ts
+| root | ld |
+| ch   | ix |
+| .    | ol |
+root -> ld : 遍历
+ld -> ix : Document
+ix -> ol : embed
+ix -> ch : 写入
+</script>
+  </doc-flow>
+
+  <doc-claim>
+    <p>加载器只读白名单扩展名，并跳过排除目录。</p>
+    <doc-code title="src/edges_rag/loader.py · sketch" lang="py" hl="6-9,15-17">
+<script type="text/plain">
+def should_index_file(path, root, allow_exts, exclude_dirs) -> bool:
+    if not path.is_file() or not is_under_root(path, root):
+        return False                       # 拒绝逃出 root 的符号链接
+    rel = path.resolve().relative_to(root.resolve())
+    if any(part in exclude_dirs for part in rel.parts[:-1]):
+        return False                       # node_modules, .git, …
+    return path.suffix.lower() in allow_exts   # .md .txt .py .ts …
+
+def load_documents(root, allow_exts, exclude_dirs) -> list[Document]:
+    docs = []
+    for path in root.resolve().rglob("*"):
+        if not should_index_file(path, root, allow_exts, exclude_dirs):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue                       # 二进制或不可解码：跳过
+        docs.append(Document(text=text, metadata={"path": rel_of(path, root)}))
+    return docs
+</script>
+    </doc-code>
+  </doc-claim>
+
+  <doc-claim>
+    <p>启动先清空集合，再全量重建，最后启动 watcher。</p>
+    <doc-calls title="启动 (lifespan)" caption="python -m edges_rag 走这条路径。">
+<script type="text/plain">
++ **main**()                                        @ src/edges_rag/__main__.py:6
++   **create_app**(settings)                        @ src/edges_rag/app.py:13
++     **lifespan**(app)                             @ src/edges_rag/app.py:27
++       **IndexStore.build_full**()                 @ src/edges_rag/index_store.py:35
++         delete_collection("edges_rag")           @ src/edges_rag/index_store.py:37
++         VectorStoreIndex.from_documents(docs)    @ src/edges_rag/index_store.py:50
++       **start_watcher**(store)                    @ src/edges_rag/watcher.py:30
+</script>
+    </doc-calls>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 3 ═════ -->
+<doc-claim>
+  <p>文件变更时，索引按路径增量增、删、改。</p>
+  <doc-machine name="doc" caption="一个文件在索引里的状态；路径就是 doc_id。">
+<script type="text/plain">
+machine doc initial absent
+state absent    # 索引里没有这个路径。
+state indexed   # 向量在 Chroma 里，doc_id = 相对路径。
+state removed final  # 文件删了，向量也删了。
+
+| absent | indexed | removed |
+
+absent  -created->  indexed : upsert
+indexed -modified-> indexed : 先删后插
+indexed -deleted->  removed : delete
+</script>
+  </doc-machine>
+
+  <doc-claim>
+    <p>watcher 把 watchdog 事件转成 upsert 或 delete。</p>
+    <doc-code title="src/edges_rag/watcher.py · sketch" lang="py" hl="5,8,11-13">
+<script type="text/plain">
+class IndexEventHandler(FileSystemEventHandler):
+    def __init__(self, store: IndexStore) -> None:
+        super().__init__(); self.store = store
+    def on_created(self, e):
+        if not e.is_directory: self.store.upsert_file(Path(e.src_path))
+    def on_modified(self, e):
+        if not e.is_directory: self.store.upsert_file(Path(e.src_path))
+    def on_deleted(self, e):
+        if not e.is_directory: self.store.delete_file(Path(e.src_path))
+    def on_moved(self, e):
+        if e.is_directory: return
+        self.store.delete_file(Path(e.src_path))
+        self.store.upsert_file(Path(e.dest_path))
+
+def start_watcher(store: IndexStore) -> Observer:
+    obs = Observer()
+    obs.schedule(IndexEventHandler(store), str(store.settings.index_root), recursive=True)
+    obs.start(); return obs
+</script>
+    </doc-code>
+  </doc-claim>
+
+  <doc-claim>
+    <p>upsert 先按路径删旧向量，再插新文档。</p>
+    <doc-code title="src/edges_rag/index_store.py · sketch" lang="py" hl="7-10">
+<script type="text/plain">
+def upsert_file(self, path: Path) -> None:
+    s = self.settings
+    if not should_index_file(path, s.index_root, s.index_allow_extensions, s.index_exclude_dirs):
+        return                               # 同一套白名单 / 排除规则
+    text = path.read_text(encoding="utf-8")
+    rel = self._rel_path(path)
+    self.delete_file(path)                   # 旧向量先走
+    doc = Document(text=text, metadata={"path": rel})
+    doc.doc_id = rel
+    self._index.insert(doc)
+
+def delete_file(self, path: Path) -> None:
+    rel = self._rel_path(path)
+    self._index.delete_ref_doc(rel, delete_from_docstore=True)
+</script>
+    </doc-code>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ 4 ═════ -->
+<doc-claim>
+  <p>嵌入和回答都走 4070ts 上的 Ollama（Tailscale 地址）。</p>
+  <doc-flow caption="minigtr 只存向量；两类模型都在 4070ts。">
+<script type="text/plain">
+api = FastAPI / minigtr
+ch  = Chroma / minigtr [db]
+emb = Ollama embed / 4070ts
+chat = Ollama chat / 4070ts
+| api | chat |
+| ch  | emb  |
+api -> ch : 检索
+api -> emb : 问题向量
+api -> chat : 生成答案
+</script>
+  </doc-flow>
+
+  <doc-claim>
+    <p>地址和模型名只来自环境变量；仓库里只放占位符。</p>
+    <doc-code title=".env.example · sketch" lang="sh" hl="3-5">
+<script type="text/plain">
+INDEX_ROOT=/path/to/.harness/compose/edges
+CHROMA_PERSIST_DIR=./data/chroma
+OLLAMA_BASE_URL=http://4070ts-win11:11434   # Tailscale 主机名或 IP
+OLLAMA_EMBED_MODEL=nomic-embed-text
+OLLAMA_CHAT_MODEL=llama3.2
+RAG_API_TOKEN=change-me                      # 真值放密钥库，不进仓
+RAG_TOP_K=5
+RAG_HOST=0.0.0.0
+RAG_PORT=8000
+</script>
+    </doc-code>
+    <doc-ask id="chatmodel">
+      <p><code>.env.example</code> 里聊天模型写什么占位？</p>
+      <label><input type="radio" name="chatmodel" value="llama3.2" checked> <code>llama3.2</code> <small>与规格一致</small></label>
+      <label><input type="radio" name="chatmodel" value="qwen2.5"> <code>qwen2.5</code> <small>中文问答更好</small></label>
+      <label><input type="radio" name="chatmodel" value="other"> 其他 <input type="text" name="chatmodel_other" placeholder="模型名"></label>
+    </doc-ask>
+  </doc-claim>
+</doc-claim>
+
+<!-- ═════ shared · not changing ═════ -->
+<doc-claim aux="shared">
+  <p>共用：一个 Settings，所有模块从它读配置。</p>
+  <doc-schema id="settings" lang="py" title="src/edges_rag/config.py · Settings" caption="pydantic-settings；读环境变量和 .env。">
+<script type="text/plain">
+class Settings(BaseSettings):
+    index_root: Path            # INDEX_ROOT，必填
+    chroma_persist_dir: Path    # CHROMA_PERSIST_DIR，必填
+    ollama_base_url: str        # OLLAMA_BASE_URL，Tailscale
+    ollama_embed_model: str     # OLLAMA_EMBED_MODEL
+    ollama_chat_model: str      # OLLAMA_CHAT_MODEL
+    rag_api_token: str          # RAG_API_TOKEN，不打日志
+    rag_top_k: int = 5
+    rag_host: str = "0.0.0.0"
+    rag_port: int = 8000
+    # … INDEX_ALLOW_EXTENSIONS, INDEX_EXCLUDE_DIRS
+</script>
+  </doc-schema>
+</doc-claim>
+
+<doc-claim aux="scope">
+  <p>不做：MySQL、OpenAI 兼容接口、前端界面、个人 brain。</p>
+  <ul>
+    <li>不用 MySQL 或其他关系库。向量只在本地 Chroma。</li>
+    <li>v1 不提供 OpenAI 兼容接口。只有 <code>POST /ask</code>。</li>
+    <li>不做官网前端。本服务只是后端问答。</li>
+    <li>不索引个人 brain 或私有工作区。</li>
+    <li>不管理 4070ts 上的 Ollama，也不自动拉模型。</li>
+    <li>不做多租户、OAuth、配额。Docker 部署留到以后。</li>
+    <li>测试文件（约 9 个）不计入上面的 15 个新文件。</li>
+  </ul>
+</doc-claim>
+
+</doc-plan>
+</main>
+</body>
+</html>
