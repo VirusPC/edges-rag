@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Edges 小助手</title>
+<style>
+  :root { color-scheme: light dark; --bg:#0b0c0f; --card:#14161c; --text:#e8eaed; --muted:#9aa0a6; --accent:#7aa2ff; --border:#2a2f3a; --ok:#3dd68c; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f7f9; --card:#fff; --text:#1a1d23; --muted:#5f6673; --accent:#3b6df6; --border:#e3e6ec; --ok:#0f9d58; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:1.4rem; margin:0 0 4px; }
+  summary { cursor:pointer; font-size:0.85rem; color:var(--muted); }
+  details.card[open] summary { margin-bottom:8px; }
+  .sub { color:var(--muted); margin:0 0 20px; font-size:0.95rem; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px; }
+  textarea, input { width:100%; border:1px solid var(--border); border-radius:10px; padding:12px; background:transparent; color:var(--text); font:inherit; }
+  textarea { min-height:96px; resize:vertical; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  button { border:0; border-radius:10px; padding:10px 16px; font:inherit; cursor:pointer; background:var(--accent); color:#fff; }
+  button.secondary { background:transparent; color:var(--text); border:1px solid var(--border); }
+  button:disabled { opacity:0.5; cursor:wait; }
+  .hint { font-size:0.85rem; color:var(--muted); margin-top:10px; }
+  .answer { white-space:pre-wrap; }
+  ul.cites { padding-left:18px; margin:8px 0 0; }
+  ul.cites li { margin-bottom:10px; }
+  code { font-size:0.85rem; }
+  .score { color:var(--muted); font-size:0.8rem; margin-left:6px; }
+  .snip { color:var(--muted); font-size:0.85rem; margin-top:2px; }
+  .pill { display:inline-block; font-size:0.75rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 40%, var(--border)); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Edges 小助手</h1>
+  <p class="sub">索引 VirusPC/edges 框架仓，公开可问</p>
+
+  <div class="card">
+    <div class="row" style="margin-top:0;align-items:center;justify-content:space-between">
+      <span class="pill" id="modePill">模式检测中…</span>
+      <button type="button" class="secondary" id="sampleBtn">看示例回答</button>
+    </div>
+    <label for="q" style="margin-top:14px">问题</label>
+    <textarea id="q" placeholder="例如：edges compose add 是做什么的？"></textarea>
+    <div class="row">
+      <button type="button" id="askBtn">提问</button>
+    </div>
+    <p class="hint" id="hint">可直接向 Edges 小助手提问。</p>
+  </div>
+
+  <div class="card" id="outCard" hidden>
+    <label>回答</label>
+    <div class="answer" id="answer"></div>
+    <label style="margin-top:14px">引用</label>
+    <ul class="cites" id="cites"></ul>
+  </div>
+
+  <details class="card">
+    <summary>备用入口（Tailscale）</summary>
+    <p class="hint" style="margin-top:0">同一套 Edges 小助手。已经接上 Tailscale 时，也可以从下面打开，无需粘贴 token。</p>
+    <p><a id="liveLink" href="http://100.67.197.1:8001/">http://100.67.197.1:8001/</a></p>
+    <p class="hint">MagicDNS：<a href="http://minigtr-ubuntu:8001/">http://minigtr-ubuntu:8001/</a></p>
+  </details>
+</main>
+<script>
+const SAMPLE = {"answer": "`edges compose add` 是用来将外部 harness 仓库登记进当前 scope 的 `.edges/compose/README.md`，同时在该仓库里创建相应的 git submodule。具体来说，它会执行以下操作：\n\n- 添加一个新的 git submodule，并将它登记在 `.edges/compose/README.md` 中。\n- 创建或更新链接到该 submodule 的 README 文件（默认情况下是 `<name>/README.md`，其中 `<name>` 是 submodule 的名称）。\n- 如果没有提供 `--path` 参数，默认检出目录为 `.edges/compose/<name>`。\n- 如果提供了 `--remote` 参数，会先执行 `git submodule add <remote> <path>`，再写入 `.edges/compose/README.md`。\n- 必须带 `--description` 参数，说明这个仓库存什么以及什么情况下该往它写。", "citations": [{"path": "packages/skills/edges-compose/SKILL.md", "snippet": "--- name: edges-compose description: 把外部 harness 仓库挂到当前 scope 时使用。教 AI 用 edges compose add、list、update 三个日常命令（名字对应 git submodule）。底层是 git submodule，默认装到仓内 .edges/compose/<name>，登记写在 .edges/compose/README.md。add 必须带 --description。推送、去掉条目用原生…", "score": 0.6012715620128525}, {"path": "packages/skills/edges-compose/SKILL.md", "snippet": "在 `.edges/compose/README.md` 的 Compose 区块（`<!-- edges-compose:start -->` 与 `:end -->` 之间）删掉那一行。 2. 用户也想删掉子模块时，让用户自己跑 `git submodule deinit -f <path>` 和 `git rm <path>`，再提交。这一步会删目录，先问用户。 ## 提示与旧条目 - 子模块目录不存在或是空的（新 clone 的主仓库还没初始化）时，`compose…", "score": 0.5966339291845942}, {"path": "packages/skills/edges-compose/SKILL.md", "snippet": "**`compose add` 必须带 `--description`。** 不传，或只传空白，命令以校验错误退出（退出码 2，`errorCode` 为 `VALIDATION_ERROR`），不会写入 Compose 区块。说明要写清两件事：这个仓存什么，以及什么情况下该往它写。后续 AI 靠这段文字决定该不该写进去，不要写成空话。 2. **命令以 CLI 为准。** 用 `--scope`（或已设置的 `EDGES_SCOPE`）、`--name`、`--remot…", "score": 0.5874653132289314}, {"path": ".edges/tasks/edges-extensions/backlog/2026-10-26--Compose补卸载能力/INDEX.md", "snippet": "--- metadata: edges-type: task edges-task-project: edges-extensions edges-updated-at: '2026-10-26T03:08:51.017Z' edges-title: Compose：补卸载能力 edges-tasks-status: backlog edges-task-priority: none name: compose补卸载能力 description: 现在去掉 Compose …", "score": 0.5849335496291298}, {"path": "packages/skills/edges-compose/SKILL.md", "snippet": "**推送用原生 git，且只在用户要求时做。** CLI 不提供 push。用户要发布被组合仓库里的改动时，在子模块目录里用普通 git：子模块默认是 detached HEAD，先 `git -C .edges/compose/<name> switch <分支>`，在分支上提交，再 `git -C .edges/compose/<name> push`。用户没要求发布时不要 push。 6. **不递归。** 只看当前仓库自己登记的条目。被组合仓库自己的 Compose…", "score": 0.5797914200890654}]};
+const LIVE_ORIGINS = ["https://edges-rag.viruspc.tech", "http://100.67.197.1:8001", "http://minigtr-ubuntu:8001", "http://127.0.0.1:8001"];
+const askBtn = document.getElementById("askBtn");
+const sampleBtn = document.getElementById("sampleBtn");
+const outCard = document.getElementById("outCard");
+const answerEl = document.getElementById("answer");
+const citesEl = document.getElementById("cites");
+const hint = document.getElementById("hint");
+const modePill = document.getElementById("modePill");
+const qEl = document.getElementById("q");
+
+function render(data) {
+  outCard.hidden = false;
+  answerEl.textContent = data.answer || "(空)";
+  citesEl.innerHTML = "";
+  (data.citations || []).forEach(c => {
+    const li = document.createElement("li");
+    const score = typeof c.score === "number" ? c.score.toFixed(2) : "";
+    li.innerHTML = `<code></code> <span class="score"></span><div class="snip"></div>`;
+    li.querySelector("code").textContent = c.path || "";
+    li.querySelector(".score").textContent = score;
+    li.querySelector(".snip").textContent = (c.snippet || "").slice(0, 220);
+    citesEl.appendChild(li);
+  });
+}
+
+function isLiveHost() {
+  const o = location.origin;
+  return LIVE_ORIGINS.some(x => o === x) || o.startsWith("http://100.67.197.1:") || o.includes("minigtr") || location.hostname === "edges-rag.viruspc.tech";
+}
+
+async function detect() {
+  if (isLiveHost()) {
+    modePill.textContent = "Edges 小助手 · 可直接问";
+    modePill.classList.add("ok");
+    hint.textContent = "请求走本站，token 留在服务器，不会出现在页面里。";
+    return "live";
+  }
+  modePill.textContent = "预览 · 仅示例";
+  hint.innerHTML = '当前页不能直接提问。请打开 <a href="https://edges-rag.viruspc.tech/">Edges 小助手</a>。';
+  return "artifact";
+}
+
+sampleBtn.onclick = () => {
+  qEl.value = "edges compose add 是做什么的？";
+  render(SAMPLE);
+};
+
+askBtn.onclick = async () => {
+  const question = qEl.value.trim();
+  if (!question) { qEl.focus(); return; }
+  if (!isLiveHost()) {
+    hint.textContent = "当前页不能直接提问。请打开 Edges 小助手后再问。";
+    render(SAMPLE);
+    return;
+  }
+  askBtn.disabled = true;
+  askBtn.textContent = "思考中…";
+  try {
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || ("HTTP " + res.status));
+    render(data);
+  } catch (e) {
+    render({ answer: "请求失败：" + e.message, citations: [] });
+  } finally {
+    askBtn.disabled = false;
+    askBtn.textContent = "提问";
+  }
+};
+
+detect();
+</script>
+</body>
+</html>

@@ -78,6 +78,35 @@ def test_ask_unauthorized_missing_token(tmp_path: Path, fake_embed):
     assert resp.status_code == 401
 
 
+def test_assistant_page_public_name(tmp_path: Path):
+    settings = Settings(
+        INDEX_ROOT=str(tmp_path),
+        CHROMA_PERSIST_DIR=str(tmp_path / "chroma"),
+        OLLAMA_BASE_URL="http://127.0.0.1:9",
+        OLLAMA_EMBED_MODEL="fake",
+        OLLAMA_CHAT_MODEL="fake",
+        RAG_API_TOKEN="test-token",
+    )
+    client = TestClient(create_app(settings=settings, skip_lifespan_index=True))
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    body = resp.text
+    assert "<title>Edges 小助手</title>" in body
+    assert "<h1>Edges 小助手</h1>" in body
+    assert "索引 VirusPC/edges 框架仓，公开可问" in body
+    assert "https://edges-rag.viruspc.tech/" in body
+    assert "/api/ask" in body
+    assert "LIVE_ORIGINS" in body
+    assert "备用入口（Tailscale）" in body
+    assert "仅限 Tailscale" not in body
+    assert "试用" not in body
+    assert "4070ts" not in body
+    assert body.index("公开可问") < body.index("100.67.197.1")
+    denied = client.post("/ask", json={"question": "Edges 是什么？"})
+    assert denied.status_code == 401
+
+
 def test_ask_unauthorized_wrong_token(tmp_path: Path, fake_embed):
     client, _ = _build_client(tmp_path, fake_embed)
     resp = client.post(

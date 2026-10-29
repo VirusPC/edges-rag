@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from edges_rag.auth import verify_bearer
@@ -14,6 +16,7 @@ from edges_rag.schemas import AskRequest, AskResponse
 from edges_rag.watcher import start_watcher
 
 _bearer_scheme = HTTPBearer(auto_error=False)
+_INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 def create_app(
@@ -44,6 +47,10 @@ def create_app(
             observer.join(timeout=5)
 
     app = FastAPI(title="edges-rag", lifespan=lifespan)
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def assistant_page() -> HTMLResponse:
+        return HTMLResponse(_INDEX_HTML.read_text(encoding="utf-8"))
 
     async def require_auth(
         credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
