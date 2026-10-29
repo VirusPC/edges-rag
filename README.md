@@ -39,6 +39,14 @@ On startup the service full-scans `INDEX_ROOT`, embeds via Ollama, persists Chro
 | `INDEX_ALLOW_EXTENSIONS` | `.md,.txt,.py,…` | See `.env.example` |
 | `INDEX_EXCLUDE_DIRS` | `node_modules,.git,…` | See `.env.example` |
 
+## Edges 小助手
+
+`GET /` serves `src/edges_rag/static/index.html`. The public title is **Edges 小助手**. The page posts questions to same-origin `POST /api/ask`.
+
+`POST /ask` stays on this service and still requires `Authorization: Bearer <RAG_API_TOKEN>`. The public front should keep injecting that token when it forwards `/api/ask`.
+
+https://edges-rag.viruspc.tech/ is served by that front. On minigtr, pull `main`, point the front at `src/edges_rag/static/index.html` (or proxy `GET /` here), then restart the process that serves the HTML.
+
 ## API
 
 `POST /ask` with header `Authorization: Bearer <RAG_API_TOKEN>`:
